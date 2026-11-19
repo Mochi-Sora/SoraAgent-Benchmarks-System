@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 
 def utcnow_iso() -> str:
@@ -249,6 +249,8 @@ class BenchmarkReport:
     provider: str
     model: str
     seed: int
+    score_mode: str = "heuristic"
+    adapter: str = "sora"
     suites: Dict[str, SuiteResult] = field(default_factory=dict)
     runs: List[RunRecord] = field(default_factory=list)
     summary: Dict[str, Any] = field(default_factory=dict)
@@ -288,6 +290,8 @@ class BenchmarkReport:
             "provider": self.provider,
             "model": self.model,
             "seed": self.seed,
+            "score_mode": self.score_mode,
+            "adapter": self.adapter,
             "environment": self.environment(),
             "summary": self.summary,
             "suites": {name: suite.to_dict() for name, suite in self.suites.items()},

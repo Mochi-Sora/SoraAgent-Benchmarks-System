@@ -9,7 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from .config import SUITE_WEIGHTS
+from .config import SUITE_WEIGHTS, TARGETS
+from .stats import summarize_runs
 from .types import BenchmarkReport, Metric, SuiteResult, utcnow_iso
 
 SUITE_LABELS = {
@@ -21,6 +22,7 @@ SUITE_LABELS = {
     "autonomy": "Autonomous task completion",
     "caching": "Prompt caching",
     "features": "Files, specialists, memory, graph & security",
+    "general": "General instruction following",
 }
 
 HEADLINE_KEYS = {
@@ -48,6 +50,11 @@ HEADLINE_KEYS = {
         "cache_stable_prefix_tokens",
     ],
     "features": ["features_edge_pass_rate"],
+    "general": [
+        "general_answer_accuracy",
+        "general_task_success",
+        "general_forbidden_answer_rate",
+    ],
 }
 
 
@@ -66,6 +73,10 @@ def build_summary(report: BenchmarkReport) -> Dict[str, Any]:
                     "unit": item.unit,
                     "score": _round(item.score) if item.score is not None else None,
                 }
+    uncertainty = {
+        name: summarize_runs(suite.runs, seed=int(report.seed) + index)
+        for index, (name, suite) in enumerate(report.suites.items())
+    }
     weighted = 0.0
     weights = 0.0
     for name, score in suite_scores.items():
@@ -75,10 +86,12 @@ def build_summary(report: BenchmarkReport) -> Dict[str, Any]:
         weighted += score * weight
         weights += weight
     overall = weighted / weights if weights else 0.0
+    raw_mode = getattr(report, "score_mode", "heuristic") == "raw"
     return {
-        "overall_score": round(overall, 2),
-        "grade": _grade(overall),
-        "suite_scores": suite_scores,
+        "overall_score": None if raw_mode else round(overall, 2),
+        "grade": "—" if raw_mode else _grade(overall),
+        "score_mode": "raw" if raw_mode else "heuristic",
+        "suite_scores": {name: (None if raw_mode else score) for name, score in suite_scores.items()},
         "headline": headline,
         "run_count": len(report.runs),
         "suite_count": len(report.suites),
@@ -86,6 +99,21 @@ def build_summary(report: BenchmarkReport) -> Dict[str, Any]:
         "provider": report.provider,
         "model": report.model,
         "errors": list(report.errors),
+        "uncertainty": uncertainty,
+        "methodology": {
+            "score_mode": (
+                "raw"
+                if getattr(report, "score_mode", "heuristic") == "raw"
+                else "heuristic_normalization"
+            ),
+            "score_meaning": (
+                "Scores are normalized against explicit targets, not a "
+                "population estimate; use the raw metrics and uncertainty "
+                "diagnostics for comparisons."
+            ),
+            "targets": dict(TARGETS),
+            "suite_weights": dict(SUITE_WEIGHTS),
+        },
     }
 
 
@@ -167,12 +195,16 @@ def render_markdown(report: BenchmarkReport) -> str:
         )
     )
     lines.append("")
-    lines.append(
-        "## Overall: {score:.1f} / 100 ({grade})".format(
-            score=summary.get("overall_score", 0.0),
-            grade=summary.get("grade", "F"),
+    overall_value = summary.get("overall_score")
+    if overall_value is None:
+        lines.append("## Overall: raw mode (no aggregate score)")
+    else:
+        lines.append(
+            "## Overall: {score:.1f} / 100 ({grade})".format(
+                score=overall_value,
+                grade=summary.get("grade", "F"),
+            )
         )
-    )
     lines.append("")
     lines.append("| Suite | Score | Runs | Status |")
     lines.append("| --- | ---: | ---: | --- |")
@@ -203,6 +235,38 @@ def render_markdown(report: BenchmarkReport) -> str:
                 )
             )
         lines.append("")
+
+    if summary.get("uncertainty"):
+        lines.append("## Measurement uncertainty")
+        lines.append("")
+        lines.append(
+            "Replicates expose run-to-run variation. Intervals are Wilson "
+            "(success rate) or percentile bootstrap (continuous metrics); "
+            "`n=1` has no interval."
+        )
+        lines.append("")
+        lines.append("| Suite | n | Success rate | Eval score | Tokens/run | Latency (ms) |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+        for name, item in summary["uncertainty"].items():
+            if not item or item.get("n", 0) == 0:
+                continue
+            lines.append(
+                "| {} | {} | {} | {} | {} | {} |".format(
+                    SUITE_LABELS.get(name, name),
+                    item["n"],
+                    _format_rate_ci(item),
+                    _format_number_ci(item.get("eval_score_ci95"), item.get("eval_score_mean")),
+                    _format_number_ci(item.get("tokens_ci95"), item.get("tokens_mean")),
+                    _format_number_ci(item.get("latency_ci95"), item.get("latency_ms_mean")),
+                )
+            )
+        lines.append("")
+        if any(item.get("insufficient_replicates") for item in summary["uncertainty"].values()):
+            lines.append(
+                "Some suites ran only one replicate. Treat those rows as a "
+                "sample of one, not a stable estimate; rerun with `--runs` > 1."
+            )
+            lines.append("")
 
     for name, suite in report.suites.items():
         lines.append("## {}".format(SUITE_LABELS.get(name, name)))
@@ -235,13 +299,49 @@ def render_markdown(report: BenchmarkReport) -> str:
         lines.append("")
     lines.append("---")
     lines.append("")
-    lines.append(
-        "Scores are heuristic normalizations against explicit targets; inspect "
-        "the raw metrics and diagnostics before drawing conclusions.  Simulated "
-        "mode is a deterministic reference policy, not a model ranking."
-    )
+    if getattr(report, "score_mode", "heuristic") == "raw":
+        lines.append(
+            "Raw score mode: aggregate scores are suppressed. Inspect the raw "
+            "metrics and uncertainty intervals; simulated mode is a deterministic "
+            "reference policy, not a model ranking."
+        )
+    else:
+        lines.append(
+            "Scores are heuristic normalizations against explicit targets; "
+            "inspect the raw metrics and uncertainty diagnostics before drawing "
+            "conclusions. Simulated mode is a deterministic reference policy, "
+            "not a model ranking."
+        )
+    config = (report.diagnostics or {}).get("config") or {}
+    if config:
+        lines.append("")
+        lines.append(
+            "**Method:** adapter `{}` · token counter `{}` · score mode `{}` · "
+            "replicates `{}`".format(
+                config.get("adapter", "sora"),
+                config.get("tokenizer", "heuristic"),
+                config.get("score_mode", "heuristic"),
+                config.get("runs", 1),
+            )
+        )
     lines.append("")
     return "\n".join(lines)
+
+
+def _format_rate_ci(item: Dict[str, Any]) -> str:
+    ci = item.get("success_ci95")
+    rate = item.get("success_rate", 0.0)
+    if not ci:
+        return "{:.1%}".format(rate)
+    return "{:.1%} [{:.1%}, {:.1%}]".format(rate, ci[0], ci[1])
+
+
+def _format_number_ci(ci: Optional[List[float]], mean: Optional[float]) -> str:
+    if mean is None:
+        return "—"
+    if not ci:
+        return "{:.2f}".format(float(mean))
+    return "{:.2f} [{:.2f}, {:.2f}]".format(float(mean), ci[0], ci[1])
 
 
 def _suite_diagnostics_markdown(name: str, suite: SuiteResult) -> List[str]:

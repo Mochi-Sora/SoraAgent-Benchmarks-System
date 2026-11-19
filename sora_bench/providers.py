@@ -37,7 +37,7 @@ from sora_agent.providers import (
 )
 
 from .protocol import build_request_record, canonical_request
-from .tokens import estimate_tokens
+from .tokenization import HeuristicCounter
 
 _BACKTICK_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*)`")
 _MEMORY_TOKEN_RE = re.compile(r"[a-z0-9]{2,}")
@@ -136,10 +136,12 @@ class RecordingProvider:
         *,
         model: str = "simulated",
         min_cache_block: int = 256,
+        tokenizer: Any = None,
     ) -> None:
         self.inner = inner
         self.model = model
         self.min_cache_block = max(0, int(min_cache_block))
+        self.tokenizer = tokenizer or HeuristicCounter()
         self.requests: List[Any] = []
         self._previous_messages: Optional[List[Message]] = None
         self._first_messages: Optional[List[Message]] = None
@@ -150,7 +152,7 @@ class RecordingProvider:
     def complete_turn(self, messages: List[Message], tools: List[Any]) -> ModelTurn:
         snapshot = clone_messages(messages)
         full, _message_text, _tool_text = canonical_request(messages, tools)
-        prompt_tokens = estimate_tokens(full)
+        prompt_tokens = self.tokenizer.count(full)
         started = time.perf_counter()
         error = ""
         try:
@@ -171,7 +173,7 @@ class RecordingProvider:
         latency_ms = (time.perf_counter() - started) * 1000.0
         usage = getattr(turn, "usage", None)
         cache_usage = self._cache_usage()
-        completion_tokens = estimate_tokens(_completion_text(turn))
+        completion_tokens = self.tokenizer.count(_completion_text(turn))
         self._record(
             snapshot,
             tools,
@@ -201,7 +203,7 @@ class RecordingProvider:
         # method lets library callers exercise the provider edge unchanged.
         snapshot = clone_messages(messages)
         full, _message_text, _tool_text = canonical_request(messages, tools)
-        prompt_tokens = estimate_tokens(full)
+        prompt_tokens = self.tokenizer.count(full)
         started = time.perf_counter()
         stream = getattr(self.inner, "stream_turn", None)
         turn: ModelTurn
@@ -223,7 +225,7 @@ class RecordingProvider:
             step=len(self.requests),
             latency_ms=latency_ms,
             prompt_tokens=prompt_tokens,
-            completion_tokens=estimate_tokens(_completion_text(turn)),
+            completion_tokens=self.tokenizer.count(_completion_text(turn)),
             turn=turn,
             error="",
             usage=getattr(turn, "usage", None),

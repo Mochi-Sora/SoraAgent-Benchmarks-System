@@ -15,6 +15,7 @@ SUITES: Tuple[str, ...] = (
     "autonomy",
     "caching",
     "features",
+    "general",
 )
 
 DEFAULT_SUITES: Tuple[str, ...] = SUITES
@@ -44,6 +45,10 @@ class BenchConfig:
     temperature: float = 0.0
     output_formats: Tuple[str, ...] = ("json", "markdown", "csv", "jsonl")
     label: str = ""
+    score_mode: str = "heuristic"
+    adapter: str = "sora"
+    agent_command: str = ""
+    tokenizer: str = "heuristic"
 
     def __post_init__(self) -> None:
         self.mode = (self.mode or "simulated").strip().lower()
@@ -61,6 +66,18 @@ class BenchConfig:
         self.latency_jitter_ms = max(0.0, float(self.latency_jitter_ms))
         self.timeout = max(1.0, float(self.timeout))
         self.temperature = max(0.0, min(2.0, float(self.temperature)))
+        self.score_mode = (self.score_mode or "heuristic").strip().lower()
+        if self.score_mode not in {"heuristic", "raw"}:
+            raise ValueError("score_mode must be heuristic or raw")
+        self.adapter = (self.adapter or "sora").strip().lower()
+        if self.adapter not in {"sora", "command"}:
+            raise ValueError("adapter must be sora or command")
+        self.agent_command = str(self.agent_command or "").strip()
+        if self.adapter == "command" and not self.agent_command:
+            raise ValueError("adapter=command requires --agent-command")
+        self.tokenizer = (self.tokenizer or "heuristic").strip().lower()
+        if self.tokenizer not in {"heuristic", "tiktoken"}:
+            raise ValueError("tokenizer must be heuristic or tiktoken")
         policy = (self.autonomy_policy or "balanced").strip().lower()
         if policy not in {"minimal", "balanced", "overreach"}:
             raise ValueError("autonomy_policy must be minimal, balanced, or overreach")
@@ -107,6 +124,9 @@ class BenchConfig:
             "temperature": self.temperature,
             "timeout": self.timeout,
             "label": self.label,
+            "score_mode": self.score_mode,
+            "adapter": self.adapter,
+            "tokenizer": self.tokenizer,
         }
 
 
@@ -137,19 +157,22 @@ TARGETS = {
     "cache_hit_rate": 0.60,
     "cache_stability": 0.80,
     "cache_stable_prefix_tokens": 512.0,
+    "general_answer_accuracy": 0.85,
+    "general_forbidden_rate": 0.05,
 }
 
 #: Weights for the overall score.  Metric families carry the same weight;
 #: within a family the suite decides how to combine sub-metrics.
 SUITE_WEIGHTS = {
-    "tokens": 1.0 / 8.0,
-    "tools": 1.0 / 8.0,
-    "memory": 1.0 / 8.0,
-    "dreaming": 1.0 / 8.0,
-    "speed": 1.0 / 8.0,
-    "autonomy": 1.0 / 8.0,
-    "caching": 1.0 / 8.0,
-    "features": 1.0 / 8.0,
+    "tokens": 1.0 / 9.0,
+    "tools": 1.0 / 9.0,
+    "memory": 1.0 / 9.0,
+    "dreaming": 1.0 / 9.0,
+    "speed": 1.0 / 9.0,
+    "autonomy": 1.0 / 9.0,
+    "caching": 1.0 / 9.0,
+    "features": 1.0 / 9.0,
+    "general": 1.0 / 9.0,
 }
 
 

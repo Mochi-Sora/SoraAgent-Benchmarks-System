@@ -7,7 +7,7 @@
 <p align="center"><strong>Measured, not claimed.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/Mochi-Sora/SoraAgent-Benchmarks"><img src="https://img.shields.io/badge/live%20score-84.8%2F100-6f42c1" alt="Live score 84.8/100"></a>
+  <a href="https://github.com/Mochi-Sora/SoraAgent-Benchmarks"><img src="https://img.shields.io/badge/live%20score-86.3%2F100-6f42c1" alt="Live score 86.3/100"></a>
   <a href="https://github.com/Mochi-Sora/SoraAgent"><img src="https://img.shields.io/badge/SoraAgent-0.4.0-1f6feb" alt="SoraAgent 0.4.0"></a>
   <a href="https://github.com/Mochi-Sora/SoraAgent-Benchmarks/blob/main/SoraAgent-live-scoreboard.md"><img src="https://img.shields.io/badge/edge%20checks-54%2F54-2ea44f" alt="54 of 54 edge checks"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f" alt="MIT license"></a>
@@ -20,8 +20,9 @@
   <a href="https://github.com/Mochi-Sora/SoraAgent-Benchmarks">Public scoreboard</a>
 </p>
 
-A reproducible benchmark harness for [SoraAgent](https://github.com/Mochi-Sora/SoraAgent).
-It runs eight suites (ten scored families) covering what the project cares about:
+A reproducible benchmark harness for [SoraAgent](https://github.com/Mochi-Sora/SoraAgent),
+with a portable answer-quality suite for other agent harnesses. It runs nine
+suites (eleven scored families) covering what the project cares about:
 
 | Family | What the benchmark answers |
 | --- | --- |
@@ -35,11 +36,13 @@ It runs eight suites (ten scored families) covering what the project cares about
 | **Autonomous task completion** | When the agent does extra work without being asked, was it useful, neutral, or harmful? Did it respect approval gates? |
 | **Prompt caching** | What fraction of each request is a reusable prefix, how stable is that prefix, and which component breaks it? |
 | **Files, specialists, memory, graph & security** | Do DOCX/ODF/EPUB/EML/RTF/HTML/CSV/archive conversions survive malformed, empty, oversized, nested, and script-bearing inputs? Do specialist scoping, routing, auto-create quotas, workspace escapes, daily stores, dream provenance, retry/forget, and daily-only consolidation behave correctly? Do graph extraction, graph-fact recall, native graph projection, transient inference cleanup, and 404 lookups work? Do state, provenance, daily session scope, durable dream artifacts, tool framing, redirect/peer guards, approvals, iMessage auth, and attachment caps hold? |
+| **General instruction following** | Does the agent follow exact formats, arithmetic, negation, structured output, multilingual prompts, and uncertainty without relying on SoraAgent tools? This is the portable suite for other harnesses. |
 
-The benchmark is **not** a leaderboard.  Simulated mode is a deterministic
+The benchmark is **not** a leaderboard. Simulated mode is a deterministic
 reference policy that exercises the real SoraAgent loop; live mode runs the same
-scenarios through a real model.  Raw metrics are more important than the
-heuristic 0–100 scores.
+scenarios through a real model. The **general** suite is portable and uses only
+the text task and answer terms. Raw metrics and uncertainty intervals are more
+important than the heuristic 0–100 scores.
 
 ---
 
@@ -63,7 +66,14 @@ python3 run_benchmark.py
 # One or more suites
 python3 run_benchmark.py --suites tools memory caching
 python3 run_benchmark.py --suites features
-python3 run_benchmark.py --suites all --runs 2
+python3 run_benchmark.py --suites general --runs 3
+
+# Portable external-agent run (command adapter)
+python3 run_benchmark.py --adapter command \
+  --agent-command "/path/to/your-agent" --suites general --runs 3
+
+# Raw metrics only; no aggregate score
+python3 run_benchmark.py --suites all --score-mode raw
 
 # A live model behind SoraAgent
 export OPENAI_API_KEY=...
@@ -99,13 +109,17 @@ the sibling `../SoraAgent` directory to `sys.path`; no installation is needed.
 --provider KIND              openai, deepseek, qwen, custom
 --model ID                   live model id
 --runs N                     repetitions per scenario
---suites a b c               tokens tools memory dreaming speed autonomy caching features
+--suites a b c               tokens tools memory dreaming speed autonomy caching features general
 --out DIR                    report directory
 --autonomy-policy P          minimal | balanced | overreach
 --cache-ablation             run cache-breaker ablations (default on in simulated)
 --no-cache-ablation
 --include-requests           dump every provider request and cache record
 --keep-workdir               keep per-run temporary directories
+--adapter sora|command       built-in SoraAgent harness or an external command
+--agent-command COMMAND      JSON stdin/stdout contract for command adapter
+--score-mode heuristic|raw   normalize to 0-100, or suppress the aggregate score
+--tokenizer heuristic|tiktoken  deterministic estimate or optional model tokenizer
 --list-suites
 --list-scenarios
 ```
@@ -139,6 +153,37 @@ Reports go to `results/live-three-tasks/<timestamp>/live_report.json` and
 duration, checks, and the remaining 10M budget.
 
 ---
+
+## Portable command adapter
+
+The `general` suite can score an agent that is not SoraAgent. The command receives
+one JSON object on stdin:
+
+```json
+{"scenario_id": "general/arithmetic", "task": "...", "requires_tools": false}
+```
+
+It must print one JSON object on stdout:
+
+```json
+{
+  "answer": "...",
+  "tool_calls": [],
+  "usage": {"prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0},
+  "latency_ms": 0
+}
+```
+
+Then run:
+
+```bash
+python3 run_benchmark.py --adapter command \
+  --agent-command "/path/to/your-agent" --suites general --runs 3
+```
+
+SoraAgent-specific suites (`tokens`, `tools`, `memory`, `dreaming`, `speed`,
+`autonomy`, `caching`, `features`) require the built-in adapter; the portable
+suite deliberately makes no assumptions about tools, memory, or orchestration.
 
 ## Modes
 
@@ -381,7 +426,7 @@ Every suite reports raw metrics and a heuristic 0–100 score.  Targets are
 explicit in `sora_bench/config.py` (`TARGETS`) and copied into
 `report.json → diagnostics.targets`.  Higher-is-better metrics use
 `min(1, value/target)`; lower-is-better metrics use `min(1, target/value)`.
-The overall score is the equal-weight mean of the eight suite scores.
+The overall score is the equal-weight mean of the nine suite scores. Set `--score-mode raw` to suppress it.
 
 Scores are intentionally conservative and **not comparable across different
 target sets**.  Change `TARGETS` if your deployment has different budgets, and
@@ -395,16 +440,19 @@ compare raw metrics across SoraAgent versions with the same targets.
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "mode": "simulated",
   "provider": "simulated",
   "model": "reference",
   "environment": {"python": "...", "sora_agent_version": "..."},
+  "score_mode": "heuristic",
+  "adapter": "sora",
   "summary": {
     "overall_score": 83.3,
     "grade": "B",
     "suite_scores": {"tools": 100.0, "...": 0.0},
-    "headline": {"tool_f1": {"value": 1.0, "score": 100.0}}
+    "headline": {"tool_f1": {"value": 1.0, "score": 100.0}},
+    "uncertainty": {"tools": {"n": 20, "success_ci95": [0.8, 1.0]}}
   },
   "suites": {
     "tools": {
@@ -473,6 +521,21 @@ retrieval and write-through, dream ground truth and idempotency, autonomy
 discrimination, and a full end-to-end report run.
 
 ---
+
+## Measurement quality
+
+- **Replicates:** `--runs N` repeats each scenario. The report includes Wilson
+  intervals for success rates and bootstrap intervals for continuous metrics;
+  `n=1` is marked as insufficient for an interval.
+- **Raw mode:** `--score-mode raw` suppresses the aggregate 0–100 score while
+  retaining all suite metrics. Use it when comparing harnesses or when targets
+  are not appropriate for your deployment.
+- **Token counts:** provider-reported usage is preferred. Simulated runs use a
+  deterministic heuristic; `--tokenizer tiktoken` enables a model tokenizer when
+  the optional package is installed, and falls back visibly to the heuristic.
+- **Scope:** the features suite is SoraAgent-specific by design. The general
+  suite is the portable comparison surface; it does not reward SoraAgent's tool
+  catalog or memory architecture.
 
 ## Limitations
 

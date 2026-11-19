@@ -18,4 +18,4 @@ if _CHECKOUT.is_dir() and str(_CHECKOUT) not in sys.path:
     sys.path.insert(0, str(_CHECKOUT))
 
 __all__ = ["__version__"]
-__version__ = "0.1.0"
+__version__ = "0.2.0"

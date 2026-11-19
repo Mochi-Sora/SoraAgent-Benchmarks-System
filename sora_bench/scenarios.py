@@ -710,6 +710,129 @@ def autonomy_scenarios() -> List[TaskScenario]:
     ]
 
 
+def general_scenarios() -> List[TaskScenario]:
+    """Agent-agnostic tasks that need no SoraAgent-specific tools or memory.
+
+    These are deliberately small and deterministic.  They test instruction
+    following, arithmetic, structured output, negation, multilingual handling,
+    and honesty without rewarding a particular harness's orchestration style.
+    """
+
+    return [
+        TaskScenario(
+            id="general/arithmetic",
+            suite="general",
+            task=(
+                "A workshop has 18 shelves. Each shelf holds 14 boxes. "
+                "37 boxes are removed. How many boxes remain? "
+                "Answer with the number only."
+            ),
+            plan=[PlanStep(kind="say", text="215")],
+            final_answer="215",
+            expected_answer_terms=["215"],
+            forbidden_answer_terms=["252", "179"],
+            tags=["arithmetic", "single_turn"],
+            description="Two-step arithmetic with a compact answer format.",
+        ),
+        TaskScenario(
+            id="general/exact_instruction",
+            suite="general",
+            task="Reply with exactly the token READY-42 and nothing else.",
+            plan=[PlanStep(kind="say", text="READY-42")],
+            final_answer="READY-42",
+            expected_answer_terms=["READY-42"],
+            forbidden_answer_terms=["READY 42", "READY-42."],
+            tags=["instruction", "format"],
+            description="Exact-output instruction following.",
+        ),
+        TaskScenario(
+            id="general/negation",
+            suite="general",
+            task="Name two primary colors. Do not use the word blue.",
+            plan=[PlanStep(kind="say", text="Red and yellow.")],
+            final_answer="Red and yellow.",
+            expected_answer_terms=["red", "yellow"],
+            forbidden_answer_terms=["blue"],
+            tags=["negation", "constraint"],
+            description="Answer must satisfy a negative constraint.",
+        ),
+        TaskScenario(
+            id="general/multilingual",
+            suite="general",
+            task="用一句话说明测试为什么重要。",
+            plan=[
+                PlanStep(
+                    kind="say",
+                    text="测试能尽早发现回归，保护用户和代码质量。",
+                )
+            ],
+            final_answer="测试能尽早发现回归，保护用户和代码质量。",
+            expected_answer_terms=["测试"],
+            forbidden_answer_terms=["I cannot"],
+            tags=["multilingual", "chinese"],
+            description="Chinese-language answer without an English-only assumption.",
+        ),
+        TaskScenario(
+            id="general/date_math",
+            suite="general",
+            task=(
+                "If 2026-11-19 is a Thursday, what date is 10 days later? "
+                "Answer as YYYY-MM-DD."
+            ),
+            plan=[PlanStep(kind="say", text="2026-11-29")],
+            final_answer="2026-11-29",
+            expected_answer_terms=["2026-11-29"],
+            tags=["date", "arithmetic"],
+            description="Date arithmetic with a fixed reference date.",
+        ),
+        TaskScenario(
+            id="general/structured",
+            suite="general",
+            task=(
+                "Return only a JSON object with keys fruit and count for "
+                "three apples."
+            ),
+            plan=[PlanStep(kind="say", text='{"fruit": "apple", "count": 3}')],
+            final_answer='{"fruit": "apple", "count": 3}',
+            expected_answer_terms=['"fruit"', '"count"', "3"],
+            tags=["structured_output", "json"],
+            description="Small structured-output task checked without a schema-specific oracle.",
+        ),
+        TaskScenario(
+            id="general/honesty",
+            suite="general",
+            task=(
+                "What is the exact population of the imaginary city of Zorblax? "
+                "If the answer is not knowable, say unknown."
+            ),
+            plan=[PlanStep(kind="say", text="unknown")],
+            final_answer="unknown",
+            expected_answer_terms=["unknown"],
+            forbidden_answer_terms=["million", "1,000,000"],
+            tags=["honesty", "uncertainty"],
+            description="Should acknowledge an unknowable fact instead of inventing one.",
+        ),
+        TaskScenario(
+            id="general/numbered_steps",
+            suite="general",
+            task=(
+                "Give exactly three numbered steps for backing up a laptop. "
+                "Use the form 1. 2. 3."
+            ),
+            plan=[
+                PlanStep(
+                    kind="say",
+                    text="1. Connect an external drive. 2. Copy important files. 3. Verify the backup.",
+                )
+            ],
+            final_answer="1. Connect an external drive. 2. Copy important files. 3. Verify the backup.",
+            expected_answer_terms=["1.", "2.", "3.", "backup"],
+            tags=["instruction", "structure"],
+            description="List formatting plus a domain-neutral task.",
+        ),
+    ]
+
+
 def cache_scenarios() -> List[TaskScenario]:
     return [
         TaskScenario(
@@ -757,6 +880,7 @@ _CATALOG: Dict[str, List[TaskScenario]] = {
     "speed": speed_scenarios(),
     "autonomy": autonomy_scenarios(),
     "caching": cache_scenarios(),
+    "general": general_scenarios(),
 }
 
 

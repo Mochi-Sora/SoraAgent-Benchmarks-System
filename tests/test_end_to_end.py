@@ -15,7 +15,7 @@ def test_full_cli_run_writes_reports(tmp_path: Path):
     assert latest_json.exists()
     assert latest_md.exists()
     payload = json.loads(latest_json.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "1.0"
+    assert payload["schema_version"] == "1.1"
     assert payload["mode"] == "simulated"
     for suite in (
         "tokens",

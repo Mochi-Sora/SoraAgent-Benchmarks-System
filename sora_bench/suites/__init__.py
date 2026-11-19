@@ -6,7 +6,7 @@ from typing import Callable, Dict
 
 from ..harness import BenchmarkHarness
 from ..types import SuiteResult
-from . import autonomy, caching, dreaming, features, memory, speed, tokens, tools
+from . import autonomy, caching, dreaming, features, general, memory, speed, tokens, tools
 
 RUNNERS: Dict[str, Callable[[BenchmarkHarness], SuiteResult]] = {
     "tokens": tokens.run,
@@ -17,6 +17,7 @@ RUNNERS: Dict[str, Callable[[BenchmarkHarness], SuiteResult]] = {
     "autonomy": autonomy.run,
     "caching": caching.run,
     "features": features.run,
+    "general": general.run,
 }
 
 

@@ -11,10 +11,8 @@ from typing import Optional, Sequence
 
 from . import __version__
 from .config import SUITES, TARGETS, BenchConfig
-from .harness import BenchmarkHarness
 from .report import write_reports
 from .scenarios import scenarios_for_suite
-from .suites import run_suite
 from .types import BenchmarkReport, SuiteResult
 
 
@@ -22,8 +20,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sora-bench",
         description=(
-            "Benchmark SoraAgent on tokens, tool use, memory, dreaming, "
-            "speed, autonomy, and prompt caching."
+            "Benchmark SoraAgent and portable command adapters on tokens, "
+            "tool use, memory, dreaming, speed, autonomy, caching, and "
+            "general instruction following."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -120,6 +119,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output formats.",
     )
     parser.add_argument("--label", default="", help="Free-form label stored in the report.")
+    parser.add_argument(
+        "--adapter",
+        choices=("sora", "command"),
+        default="sora",
+        help=(
+            "sora uses the built-in SoraAgent harness; command runs an external "
+            "agent with the portable general suite."
+        ),
+    )
+    parser.add_argument(
+        "--agent-command",
+        default="",
+        help="Command for --adapter command; receives one JSON task on stdin.",
+    )
+    parser.add_argument(
+        "--tokenizer",
+        choices=("heuristic", "tiktoken"),
+        default="heuristic",
+        help=(
+            "Token counter: deterministic heuristic, or optional tiktoken "
+            "(falls back to heuristic when unavailable)."
+        ),
+    )
+    parser.add_argument(
+        "--score-mode",
+        choices=("heuristic", "raw"),
+        default="heuristic",
+        help=(
+            "heuristic reports normalized 0-100 scores; raw keeps suite "
+            "metrics visible but suppresses the aggregate score."
+        ),
+    )
     parser.add_argument("--list-suites", action="store_true", help="List suite names and exit.")
     parser.add_argument("--list-scenarios", action="store_true", help="List scenarios and exit.")
     parser.add_argument("--version", action="version", version=__version__)
@@ -181,60 +212,99 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             temperature=args.temperature,
             output_formats=tuple(args.format),
             label=args.label,
+            score_mode=args.score_mode,
+            adapter=args.adapter,
+            agent_command=args.agent_command,
+            tokenizer=args.tokenizer,
         )
     except ValueError as exc:
         print("error: {}".format(exc), file=sys.stderr)
         return 2
 
+    if config.adapter == "command" and config.suites != ("general",):
+        print(
+            "warning: adapter=command supports the portable general suite only; "
+            "running --suites general",
+            file=sys.stderr,
+        )
+        config.suites = ("general",)
+
     started = time.perf_counter()
-    harness = BenchmarkHarness(config)
     report = BenchmarkReport(
         mode=config.mode,
-        provider=config.provider_kind,
+        provider=config.provider_kind if config.adapter == "sora" else "external-command",
         model=config.model or ("reference" if config.simulated else "default"),
         seed=config.seed,
     )
+    report.score_mode = config.score_mode
+    report.adapter = config.adapter
     report.diagnostics = {
         "config": config.to_dict(),
         "targets": dict(TARGETS),
         "label": config.label,
         "sora_bench_version": __version__,
         "cache_ablation": config.cache_ablation if config.simulated else False,
+        "adapter": config.adapter,
+        "tokenizer": config.tokenizer,
     }
     exit_code = 0
-    try:
-        for name in config.suites:
-            print("[bench] running {} ...".format(name), flush=True)
-            suite_started = time.perf_counter()
-            try:
-                suite = run_suite(harness, name)
-            except Exception as exc:  # noqa: BLE001 - keep other suites running
-                from sora_agent.providers import ProviderConfigError
+    if config.adapter == "command":
+        from .portable import run_external_general
 
-                if isinstance(exc, ProviderConfigError):
-                    logging.warning("suite %s cannot start: %s", name, exc)
-                else:
-                    logging.exception("suite %s failed", name)
-                suite = SuiteResult(
-                    name=name,
-                    error="{}: {}".format(type(exc).__name__, exc),
+        print("[bench] running general (portable adapter) ...", flush=True)
+        suite_started = time.perf_counter()
+        suite = run_external_general(config)
+        suite.duration_ms = (time.perf_counter() - suite_started) * 1000.0
+        report.suites["general"] = suite
+        report.runs.extend(suite.runs)
+        if suite.error:
+            report.errors.append("general: {}".format(suite.error))
+            exit_code = 1
+        print(
+            "[bench] general done in {:.2f}s (score: {})".format(
+                suite.duration_ms / 1000.0,
+                "{:.1f}".format(suite.score) if suite.score is not None else "n/a",
+            ),
+            flush=True,
+        )
+    else:
+        from .harness import BenchmarkHarness
+        from .suites import run_suite
+
+        harness = BenchmarkHarness(config)
+        try:
+            for name in config.suites:
+                print("[bench] running {} ...".format(name), flush=True)
+                suite_started = time.perf_counter()
+                try:
+                    suite = run_suite(harness, name)
+                except Exception as exc:  # noqa: BLE001 - keep other suites running
+                    from sora_agent.providers import ProviderConfigError
+
+                    if isinstance(exc, ProviderConfigError):
+                        logging.warning("suite %s cannot start: %s", name, exc)
+                    else:
+                        logging.exception("suite %s failed", name)
+                    suite = SuiteResult(
+                        name=name,
+                        error="{}: {}".format(type(exc).__name__, exc),
+                    )
+                    exit_code = 1
+                suite.duration_ms = (time.perf_counter() - suite_started) * 1000.0
+                report.suites[name] = suite
+                report.runs.extend(suite.runs)
+                if suite.error:
+                    report.errors.append("{}: {}".format(name, suite.error))
+                print(
+                    "[bench] {} done in {:.2f}s (score: {})".format(
+                        name,
+                        suite.duration_ms / 1000.0,
+                        "{:.1f}".format(suite.score) if suite.score is not None else "n/a",
+                    ),
+                    flush=True,
                 )
-                exit_code = 1
-            suite.duration_ms = (time.perf_counter() - suite_started) * 1000.0
-            report.suites[name] = suite
-            report.runs.extend(suite.runs)
-            if suite.error:
-                report.errors.append("{}: {}".format(name, suite.error))
-            print(
-                "[bench] {} done in {:.2f}s (score: {})".format(
-                    name,
-                    suite.duration_ms / 1000.0,
-                    "{:.1f}".format(suite.score) if suite.score is not None else "n/a",
-                ),
-                flush=True,
-            )
-    finally:
-        harness.close()
+        finally:
+            harness.close()
     report.duration_ms = (time.perf_counter() - started) * 1000.0
     paths = write_reports(
         report,
@@ -244,11 +314,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     summary = report.summary
     print("")
-    print(
-        "Overall: {:.1f}/100 ({})".format(
-            summary.get("overall_score", 0.0), summary.get("grade", "F")
-        )
-    )
+    overall = summary.get("overall_score")
+    if overall is None:
+        print("Overall: raw metrics (no aggregate score)")
+    else:
+        print("Overall: {:.1f}/100 ({})".format(overall, summary.get("grade", "F")))
     if paths.get("markdown"):
         print("Summary: {}".format(paths["markdown"]))
     if paths.get("json"):
