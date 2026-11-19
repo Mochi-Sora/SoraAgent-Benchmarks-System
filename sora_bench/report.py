@@ -169,7 +169,11 @@ def write_reports(
 def render_markdown(report: BenchmarkReport) -> str:
     summary = report.summary or build_summary(report)
     lines: List[str] = []
-    lines.append("# SoraAgent Benchmark")
+    lines.append(
+        "# SoraAgent Benchmark"
+        if getattr(report, "adapter", "sora") == "sora"
+        else "# Agent Benchmark"
+    )
     lines.append("")
     environment = report.environment()
     lines.append(

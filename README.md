@@ -99,8 +99,9 @@ results/
   latest.md
 ```
 
-`python3 -m sora_bench` is equivalent to `python3 run_benchmark.py`.  Both add
-the sibling `../SoraAgent` directory to `sys.path`; no installation is needed.
+`python3 -m sora_bench` is equivalent to `python3 run_benchmark.py`. The built-in
+SoraAgent adapter loads the sibling `../SoraAgent` checkout; the command adapter
+does not require SoraAgent to be installed.
 
 ### Useful flags
 

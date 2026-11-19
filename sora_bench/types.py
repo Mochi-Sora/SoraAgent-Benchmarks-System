@@ -278,6 +278,7 @@ class BenchmarkReport:
             "platform": platform.platform(),
             "machine": platform.machine(),
             "sora_agent_version": sora_version,
+            "adapter": self.adapter,
         }
 
     def to_dict(self, include_requests: bool = False) -> Dict[str, Any]:
