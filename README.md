@@ -317,7 +317,7 @@ Key metrics:
 
 The suite is labelled **Files, specialists, memory, graph & security** in reports.
 
-Deterministic edge-case suite for the current 0.3.x surface:
+Deterministic edge-case suite for the current 0.4.x surface:
 
 * **Files**: DOCX, ODF, EPUB, EML, RTF, nested archives, HTML script
   stripping/tables, empty files, malformed DOCX, archive total-byte caps, and
